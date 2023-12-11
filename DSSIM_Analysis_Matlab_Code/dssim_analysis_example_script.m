@@ -78,8 +78,9 @@ paras_dssim.times = parse_time_input(paras_dssim);
 %% Perform DSSIM Analysis on denoised dataset
 
 dssim = dssim_analysis(paras_dssim);
-aaaaaaaaaaa
+
 paras_dssim = rmfield(paras_dssim,'data'); %save memory
+
 %% Create side-by-side video
 
 Stack_im_RGB = creat_data_RGB_vid(Stack_im,data_contrast_type,outliers);
