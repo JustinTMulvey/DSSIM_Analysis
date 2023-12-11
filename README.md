@@ -6,7 +6,7 @@ Highlights:
 - Structural dissimilarity analysis is a segmentation-free analysis method but provides comparable results to segmentation analysis.
 - Structural dissimilarity analysis is simple and computationally efficient.
 
-https://github.com/JustinTMulvey/DSSIM_Analysis/assets/141819477/b476e880-0fe7-45da-9cbc-bf5d9918b5d3
+https://github.com/JustinTMulvey/DSSIM_Analysis/assets/141819477/ab4b17b4-8638-4f88-bbce-10bd322c4a05
 
 ## Platform considerations
 
