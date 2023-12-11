@@ -1,8 +1,14 @@
 # DSSIM Analysis MATLAB Code
 
+## Files
+-dssim_analysis.m : Stand alone function file
+-dssim_analysis_example_script.m : Example script for applying DSSIM Analysis to a traffic video
+-Traffic_example_for_DSSIM.avi : Traffic video for example script
+-Time_data.csv : Frame times for example script
+
 ## How to run the example
 
-"dssim_analysis.m" is a standalone function file, and "dssim_analysis_example_script.m" is an example for applying the analysis to "Traffic_example_for_DSSIM.avi". Download all files to the same folder and run the example script, which will write 3 output files. We recommend modifying the example script to run with your data and analysis parameters.
+Download all files to the same folder and run the example script, which will write 3 output files. We recommend modifying the example script to run with your data and analysis parameters. The scripts were written and tested with MATLAB 2020b.
 
 ## How to tweak this project for your own uses
 
