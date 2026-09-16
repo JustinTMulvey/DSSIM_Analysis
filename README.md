@@ -83,15 +83,6 @@ jupyter notebook DSSIM_Analysis_notebook.ipynb
 **MATLAB** — open `DSSIM_Analysis_Matlab_Code/dssim_analysis_example_script.m` and run it.
 Modify the parameters at the top for your own data.
 
-## Memory and speed
-
-These programs hold the dataset in memory. The Python implementation needs roughly
-`frames x height x width x 4 bytes x 3`. The MATLAB implementation is considerably more
-demanding; 32 GB is a sensible minimum there for large datasets.
-
-Both implementations run the frame loop on a single core. As a reference point, the
-bundled traffic example — 173 frames of 1280 x 720, 638 MB once loaded as float32 — takes
-roughly half a minute in Python at `RADIUS = 3`, and longer at larger radii.
 
 ## Citation
 
