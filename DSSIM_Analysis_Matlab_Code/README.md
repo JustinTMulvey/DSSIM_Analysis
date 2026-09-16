@@ -70,7 +70,7 @@ contrast step, which the example script does not use by default.
 The two produce comparable results. Both denoise with the same Gaussian filter, normalise
 the same way, and compute SSIM from the same three components.
 
-Two differences worth knowing:
+Key differences:
 
 1. **Frame numbering.** This version writes 1-based frame numbers, matching MATLAB
    indexing. The Python version writes 0-based, matching Python indexing. The two CSVs are
