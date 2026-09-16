@@ -46,9 +46,7 @@ check the DSSIM map against what you can see moving — vehicles and pedestrians
 the road and buildings stay dark.
 
 **Then look at the LC-TEM example.** It is the microscopy case the method was built for,
-and it shows the same code on noisy, low-dose data where the change is *not* obvious by
-eye. It also demonstrates the other two input formats — a folder of TIFFs rather than a
-video, and no time file.
+and should be easier to adapt to real dataset.
 
 The point of having both is that the four main parameters are dataset-dependent, not
 universal. The traffic example runs at `GAUSS_BLUR_SIGMA = 1`, `FRAME_OFFSET = 1`,
