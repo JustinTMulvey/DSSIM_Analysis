@@ -1,0 +1,39 @@
+# Analysis outputs
+dssim_output/
+*_DSSIM_video.avi
+*_side_by_side.avi
+*_DSSIM_values.csv
+*_DSSIM_run_info.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# MATLAB
+*.asv
+*.m~
+slprj/
+
+# Java / ImageJ build products are committed deliberately (see the plugin folder),
+# so no *.class rule here.
+
+# Superseded versions kept locally, not part of the repo
+archive/
+
+# Scratch output, kept locally
+Claude outputs/
+
+# Editors
+.vscode/
+.idea/
+.spyproject/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

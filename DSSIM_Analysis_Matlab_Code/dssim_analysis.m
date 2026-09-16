@@ -1,107 +1,150 @@
 function dssim = dssim_analysis(paras_dssim)
+%DSSIM_ANALYSIS  Structural dissimilarity analysis of an image stack.
 %
-% Matlab code for applying DSSIM analysis, as described in the 2023 Ultramicroscopy publication: 
-% doi.org/10.1016/j.ultramic.2023.113894
+% Turns a video into a per-pixel map of where structure changed between frames:
 %
-% github.com/JustinTMulvey/DSSIM_Analysis 
+%     DSSIM = (1 - SSIM) / 2
 %
-% Description:
-% - Structural dissimilarity analysis provides structural dynamics maps from videos.
-% - Structural dissimilarity analysis is segmentation-free analysis method but 
-%   provides comparable results to segmentation analysis.
-% - Structural dissimilarity analysis is simple and computationally efficient.
+% Frame t is compared with frame t + frame_offset, so a stack of N frames produces
+% N - frame_offset DSSIM maps. Values near 0 mean nothing changed there; larger
+% values mean the local structure changed. No segmentation, tracking or
+% thresholding is required.
 %
-% The "paras_dssim" input is a structure that better organized the funciton
-% inputs. Please read the documentation for SSIM(), as several inputs are 
-% passed to this function.
+% DSSIM highlights movement as well as structural change.
+% Drift correcting the data is advantageous towards isolating structural change with DSSIM.
 %
-% Required Inputs: 
-%   - paras_dssim.data (cell) : cell of single channel images, where each
-%     image is in its own cell.
+% The DSSIM loop is single-threaded. The only parfor is in the per-frame display
+% contrast step, which the example script does not use by default.
 %
-%   - paras_dssim.times (vector, doubel) : vector of time values for each
-%     frame, where the number of time values must equal the number of frames.
+% Method: Mulvey et al., Ultramicroscopy 257 (2024) 113894
+%         doi.org/10.1016/j.ultramic.2023.113894
+% Repository: github.com/JustinTMulvey/DSSIM_Analysis
 %
-%   - paras_dssim.frame_offset (double) : number of frames in video
-%     seperating DSSIM calculation. ie "1" will compare frame n with
-%     frame n+1, and "3" will compare n with n+3.
 %
-%   - paras_dssim.exponents (vector, double) : [alpha beta gamma] exponents
-%     with values 0-1. See ssim() documentation 
+% THE FOUR PARAMETERS THAT DECIDE YOUR RESULT
+% -------------------------------------------
+% These control what the analysis actually measures, so they are the ones to think
+% about and to report in a methods section. Their values are determined by the
+% dataset: the blur by the noise in the data, the radius and frame offset by the
+% spatial and temporal scale of the dynamics.
 %
-%   - paras_dssim.radius (double) : controls neightborhood size, see ssim()
+%   paras_dssim.frame_offset (integer)
+%       How far apart the compared frames are. 1 = consecutive, which catches the
+%       fastest changes. A value of 3 compares frames 1,4  2,5  3,6 and so on.
+%       Larger values are more sensitive to slow events but have poor temporal
+%       resolution for fast ones, and lower the temporal resolution of the analysis
+%       (Nyquist limit). Start large and work down. It costs nothing extra to
+%       compute; a larger offset simply yields fewer output frames.
 %
-%   - paras_dssim.remove_boarder_dist (integer) : removes board pixels to
-%     avoid boundary artifacts. recommended value: ceil(paras_dssim.radius * 3);
-%     because this is the 3rd standard deviation of the neighborhood
+%   paras_dssim.radius (double)
+%       The standard deviation of the Gaussian weighting, in pixels - NOT the window
+%       size. The neighborhood spans
 %
-%   - paras_dssim.dssim_contrast_type (string) : contrast adjustment to 
-%     dssim images for display purposes. Must be "per_frame_contrast" or 
-%     "constant_contrast". "per_frame_contrast" will remove outliers on a 
-%     per-frame basis, and "constant_contrast" will remove outliers for the
-%     entire DSSIM video, and provide a constant contrast scale for the 
-%     entire video. The function is hardcoded to remove the top and bottom 
-%     .1% of values which is recommended, see "rmv_bottom_outliers_pct" to
-%     change this.
+%           N = 2*ceil(3*radius) + 1   pixels per side
 %
-% Outputs:
-%   - dssim.Stack_dssim_rgb_contr (cell, uint8) : Cell of contrast corrected RGB 
-%     DSSIM frames for visualization. 
+%       so radius = 3 gives a 19 x 19 px neighborhood. Tune it to the size of the
+%       feature of interest: a bigger neighborhood gives smoother, higher-signal maps
+%       at the cost of spatial resolution. Note the weighting is Gaussian, so about
+%       76% of the weight sits within +/- radius of the centre - the effective
+%       neighborhood is smaller than the window.
 %
-%   - dssim.Vol_dssim (volume,single) : calculated DSSIM frames in a 3D volume, 
-%     note this will be smaller then the input cell
+%   paras_dssim.exponents (vector, [alpha beta gamma])
+%       The DSSIM coefficients, which weight the three components SSIM compares:
+%       the mean (m), the variance (v), and the normalized cross-correlation (c).
 %
-%   - dssim.inds_algined (volume,single) : indicies used for aligning the
-%     data frames with the dssim frames. If there is a frame offset of 3, it
-%     will try to pick the dataframe between these two in order to line up
-%     structural change maps with the data.
+%           SSIM(X_t, X_t+dt) = m^alpha * v^beta * c^gamma
 %
-%   - dssim.means_dssim (vector,double) : vector of mean DSSIM values from
-%     DSSIM frames
+%       Component      Coefficient   Compares
+%         mean (m)        alpha      the weighted mean intensity of the neighborhood
+%         variance (v)    beta       the weighted variance within the neighborhood
+%         cross-corr (c)  gamma      the weighted normalized cross-correlation
+%                                    between the two neighborhoods
 %
-%   - paras_dssim.table_dssim_stats (table) : key results from analysis
+%       Keep these at [1 1 1] unless you have a reason not to. Setting a coefficient
+%       to 0 removes that component: [0 0 1] reduces DSSIM to a local normalized
+%       cross-correlation, and [0 1 1] removes the mean channel, which was selected
+%       for confocal fluorescence data where the mean contributed mostly noise.
+%       No exponent tuning was required for the LCTEM datasets in the publication.
 %
-%   - dssim.filt_size (integer) : Actual neightborhood size in pixels, ie
-%     19 would be a 19 x 19 pixel neighborhood, resulting from a ssim 
-%     radius of 3
+%   (the Gaussian denoising blur is applied before this function - see the example
+%    script. DSSIM responds to ANY frame-to-frame difference, and is very sensitive
+%    to noise such as shot noise, so for noisy low-dose data blurring first is what
+%    separates structural change from noise.)
 %
-% Example inputs:
-% 
+%
+% EVERYTHING ELSE
+% ---------------
+%   paras_dssim.data (cell)
+%       Cell array of single-channel images, one frame per cell.
+%
+%   paras_dssim.times (vector, double)
+%       Time value for each frame. Must have one entry per frame, or the analysis
+%       falls back to 1 second per frame.
+%
+%   paras_dssim.remove_boarder_dist (integer)
+%       Width of the frame edge to blank out. Recommended: ceil(radius * 3), which is
+%       exactly how far the neighborhood reaches - beyond that the window reads
+%       padding rather than data. Set 0 to keep the border. NOTE these blanked pixels
+%       count as zeros in means_dssim, so that value depends on frame size and radius.
+%
+%   paras_dssim.dssim_contrast_type (string)
+%       Display only; does not affect Vol_dssim. "constant_contrast" applies one
+%       intensity scale to the whole video so frames are comparable with each other.
+%       "per_frame_contrast" scales each frame independently for maximum within-frame
+%       detail. Both clip the top and bottom 0.1% of values before scaling.
+%
+%
+% OUTPUTS
+% -------
+%   dssim.Vol_dssim (volume, single)
+%       The raw DSSIM maps - this is the quantitative output.
+%
+%   dssim.Stack_dssim_rgb_contr (cell, uint8)
+%       Contrast-adjusted, colour-mapped frames for display and video export.
+%
+%   dssim.means_dssim (vector, double)
+%       Mean DSSIM per frame - the structural-change-over-time curve.
+%
+%   dssim.table_dssim_stats (table)
+%       Frame numbers, times and mean values. Frame numbers are 1-based, matching
+%       MATLAB indexing. (The Python implementation writes the same table 0-based to
+%       match Python indexing - the two are offset by one.)
+%
+%   dssim.inds_aligned (vector)
+%       Which data frame lines up with each DSSIM frame, for side-by-side display.
+%       If frame_offset is odd there is no exact middle frame; alignment favours the
+%       later one.
+%
+%   dssim.filt_size (integer)
+%       The neighborhood size in pixels, 2*ceil(3*radius)+1.
+%
+%
+% EXAMPLE
 %   paras_dssim.data = data_cell;
 %   paras_dssim.times = time_vector;
 %   paras_dssim.frame_offset = 1;
 %   paras_dssim.exponents = [1 1 1];
-%   paras_dssim.radius = 3; 
+%   paras_dssim.radius = 3;
 %   paras_dssim.dssim_contrast_type = "constant_contrast";
 %   paras_dssim.remove_boarder_dist = ceil(paras_dssim.radius * 3);
 %
-% Example script:
-%   Example script with test data can be found at: 
-%   https://github.com/JustinTMulvey/DSSIM_Analysis/tree/main/DSSIM_Analysis_Matlab_Code
+%   A worked example with test data is in dssim_analysis_example_script.m. It is
+%   highly recommended to start from that script with your own data.
 %
-%   It is highly recommended to modify this script with your data for
-%   analysis
-%
-% Notes:
-%   Please read the publication, ssim MATLAB documentation, and ssim wiki.
-%   note single precision values are used throughout to save memory.
-%   This program is currently very memory intenstive. 
+% MEMORY
+%   This program is memory intensive - the whole dataset is held in RAM. It is
+%   possible to optimize it with lazy loading to use almost none, but that is beyond
+%   the scope of this work, and keeping the data in RAM makes parameter tuning much
+%   faster.
 %
 % Author:
-%   Justin T. Mulvey, mulveyj@uci.edu
+%   Justin T. Mulvey, jtmulvey1@gmail.com
+%   Additional DSSIM examples can be viewed at justintmulvey.com
 %
-% Date:
-%   Nov 23, 2023
-%
-% See also:
-%   ssim() documentation and wiki 
-%   doi.org/10.1021/jacs.2c01884
+% See also: SSIM
 %
 % MATLAB Version:
 %   Written and tested in MATLAB 2020b
-%
-% Revision History:
-%   none.
 
     %% Compute DSSIM
     Vol_gray = single( mat2gray( Stack_to_Vol(paras_dssim.data)));
@@ -130,14 +173,23 @@ function dssim = dssim_analysis(paras_dssim)
     end
     
     %% Calc mean DSSIM for each frame
-    % calculates the average DSSIM value for each frame
+    % Note the blanked border counts as zeros here, so this value depends on frame
+    % size and radius. Comparable across runs at fixed settings, not across radii.
+    means_dssim = zeros(1,size(Vol_DSSIM,1));
     for i = 1:size(Vol_DSSIM,1)
         im = squeeze(Vol_DSSIM(i,:,:));
         means_dssim(i) = mean(im(:));
     end
     
     %% DSSIM time analysis
-    if isempty(paras_dssim.times) || ~isfield(paras_dssim,'times')
+    % isfield must be tested first - the old order dereferenced .times before
+    % checking it existed, which errored when the field was absent.
+    if ~isfield(paras_dssim,'times') || isempty(paras_dssim.times)
+        paras_dssim.times = 1:numel(paras_dssim.data);
+    end
+    if numel(paras_dssim.times) ~= numel(paras_dssim.data)
+        warning(['Got ',num2str(numel(paras_dssim.times)),' time points for ', ...
+                 num2str(numel(paras_dssim.data)),' frames. Assuming 1 second per frame.']);
         paras_dssim.times = 1:numel(paras_dssim.data);
     end
     
@@ -154,7 +206,9 @@ function dssim = dssim_analysis(paras_dssim)
     table_dssim_stats{:,'data_frame_1_time'} = paras_dssim.times(1:end-paras_dssim.frame_offset)';
     table_dssim_stats{:,'data_frame_2_time'} = paras_dssim.times(paras_dssim.frame_offset+1:end)';
     
-    table_dssim_stats{:,'dssim_frame_mean_time'} = table_dssim_stats{:,'data_frame_1_time'} + table_dssim_stats{:,'data_frame_2_time'}./2;
+    % Midpoint of the two frame times. The parentheses matter: t1 + t2./2 is not a
+    % midpoint, which is what this line used to compute.
+    table_dssim_stats{:,'dssim_frame_mean_time'} = ( table_dssim_stats{:,'data_frame_1_time'} + table_dssim_stats{:,'data_frame_2_time'} ) ./ 2;
     
     %% Data frame and DSSIM frame alignment
     %if frame offset is odd, alignment will favor the future gray data frame
@@ -174,6 +228,27 @@ function dssim = dssim_analysis(paras_dssim)
         
 end
 
+function print_progress(i,n,label)
+%PRINT_PROGRESS  Report loop progress at 0, 20, 40, 60, 80 and 100 percent.
+%   Call once per iteration with the 1-based index i out of n. Only the six
+%   milestones print, so a 5000 frame run gives six lines rather than 5000.
+
+    step = 20;
+
+    if i == 1
+        fprintf('%s: 0%%\n',label);
+    end
+
+    % Print only when this iteration crosses into a new 20% band.
+    pct_now  = floor(100 *  i    / (n * step)) * step;
+    pct_prev = floor(100 * (i-1) / (n * step)) * step;
+
+    if pct_now > pct_prev
+        fprintf('%s: %d%%\n',label,pct_now);
+    end
+
+end
+
 function Stack_DSSIM_RGB = per_frame_contrast(Vol_DSSIM,rmv_bottom_outliers_pct,rmv_top_outlier_pct)
 
     parfor i = 1:size(Vol_DSSIM,1)
@@ -181,38 +256,46 @@ function Stack_DSSIM_RGB = per_frame_contrast(Vol_DSSIM,rmv_bottom_outliers_pct,
         im = squeeze(Vol_DSSIM(i,:,:));
         
         im = remove_outliers(im,rmv_bottom_outliers_pct,rmv_top_outlier_pct);
-                
-        cmap_flip = colormap(viridis()); 
-        
+
+        % Rescale this frame to [0 1] after clipping. Without this the frame is only
+        % clipped, and since DSSIM values are typically ~0.01 the colour map was being
+        % indexed near zero - every frame came out almost black. constant_contrast
+        % already rescales (via JM_mat2gray); this is the per-frame equivalent.
+        im = JM_mat2gray(im, min(im(:)), max(im(:)));
+
+        cmap_flip = viridis();
+
         im_rgb = gray_to_rgb(im,cmap_flip);
-        
+
         Stack_DSSIM_RGB{i} = uint8( 255.* im_rgb);
-        
+
     end 
 
 end
 
 function [img,low_thresh,high_thresh] = remove_outliers(img,low_limit_pct,up_limit_pct)
 
-    if low_limit_pct ~= 0 && up_limit_pct ~=0
-        nel=numel(img);
+    % Each side is handled independently. The old test was
+    %   if low_limit_pct ~= 0 && up_limit_pct ~= 0
+    % which silently disabled BOTH when either was set to 0. The max(...,1) guards
+    % also matter: on a small image round(0.1/100*nel) is 0, and indexing a sorted
+    % vector at 0 is an error.
+    nel = numel(img);
+    img_vec_sorted = sort(img(:),'descend');
 
-        pix_high=round(up_limit_pct./100.*nel); 
-        pix_low=round(low_limit_pct./100.*nel);
+    high_thresh = img_vec_sorted(1);
+    low_thresh  = img_vec_sorted(end);
 
-        img_vec=img(:);
-        img_vec_sorted=sort(img_vec,'descend');
+    if up_limit_pct ~= 0
+        pix_high = max(round(up_limit_pct./100.*nel), 1);
+        high_thresh = img_vec_sorted(pix_high);
+        img(img >= high_thresh) = high_thresh;
+    end
 
-        high_thresh=img_vec_sorted(pix_high);
-        low_thresh = img_vec_sorted(end-pix_low);
-
-        high_log = img>=high_thresh;
-        low_log = img<=low_thresh;
-
-        img(high_log)=high_thresh;
-        img(low_log)=low_thresh;
-    else
-        img = img;
+    if low_limit_pct ~= 0
+        pix_low = max(round(low_limit_pct./100.*nel), 1);
+        low_thresh = img_vec_sorted(end - pix_low + 1);
+        img(img <= low_thresh) = low_thresh;
     end 
 
 end
@@ -236,11 +319,13 @@ function Stack_DSSIM_RGB = consant_contrast(Vol_DSSIM,rmv_bottom_outliers_pct,rm
     for i = 1:size(Vol_DSSIM,1)
 
         im = squeeze(Vol_DSSIM(i,:,:));
-               
-        cmap_flip = colormap(viridis()); 
-        
+
+        % viridis() directly rather than colormap(viridis()) - colormap() opens a
+        % figure window as a side effect, which is unwanted in a batch run.
+        cmap_flip = viridis();
+
         im_rgb = gray_to_rgb(im,cmap_flip);
-        
+
         Stack_DSSIM_RGB{i} = uint8( 255.* im_rgb);
     end  
 
@@ -256,9 +341,11 @@ function Vol_DSSIM = JM_mat2gray(Vol_DSSIM,new_min,new_max)
 end
 
 function Volume_Gray = get_ssim_vol(Volume_Gray,paras_ssim)
-    
-    for i = 1:size(Volume_Gray,1)-paras_ssim.frame_offset
-        
+
+    n_pairs = size(Volume_Gray,1) - paras_ssim.frame_offset;
+
+    for i = 1:n_pairs
+
         im1 = squeeze(Volume_Gray(i,:,:));
         im2 = squeeze(Volume_Gray(i + paras_ssim.frame_offset,:,:));
 
@@ -267,10 +354,11 @@ function Volume_Gray = get_ssim_vol(Volume_Gray,paras_ssim)
         %Writes back into the data volume to save memory
         Volume_Gray(i,:,:) = single(ssim_im);
 
+        print_progress(i,n_pairs,'DSSIM');
     end
-    
+
     %remove boundary frames
-    last_frame = size(Volume_Gray,1) - paras_ssim.frame_offset; 
+    last_frame = size(Volume_Gray,1) - paras_ssim.frame_offset;
     Volume_Gray(last_frame+1:end,:,:) = [];
     
     %output is the dssim volume
@@ -301,8 +389,10 @@ end
 
 function Volume = Stack_to_Vol(Stack)
 
+    % Preallocated as single. zeros() defaults to double, which made the volume twice
+    % the size the "single precision throughout" comment claimed.
     fdims = size(Stack{1});
-    Volume = zeros(length(Stack),fdims(1),fdims(2));
+    Volume = zeros(length(Stack),fdims(1),fdims(2),'single');
 
     for i = 1:length(Stack)
 
@@ -371,8 +461,12 @@ else
 end;
 % Calculate the indices of the colormap matrix
 a = double(a);
-a(a==0) = .00000001 ; % Needed to produce nonzero index of the colormap matrix
-ci = ceil(a.*255); 
+% Map [0 1] onto the full colour map and clamp. The old line was ceil(a.*255), which
+% only ever reached row 255 of a 256-row map, and threw an index error for any value
+% above 1.
+n_colors = size(map,1);
+ci = ceil(a .* n_colors);
+ci = min(max(ci,1), n_colors); 
 % Colors in the new image
 [il,iw] = size(a);
 r = zeros(il,iw); 

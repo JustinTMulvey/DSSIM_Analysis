@@ -1,8 +1,35 @@
-% Author: Justin T. Mulvey
-% 2023_08Aug_04
-% Joe Patterson Research Group
-% University of California, Irvine
-% Version: 1.0
+% DSSIM ANALYSIS - EXAMPLE SCRIPT
+%
+% Structural dissimilarity analysis turns a video into a map of where structure
+% changed between frames:  DSSIM = (1 - SSIM) / 2
+%
+% Each frame is compared with the one frame_offset positions later. In the DSSIM
+% image, dark purple regions indicate nothing changed there; bright yellow regions
+% indicate the local structure changed.
+%
+% DSSIM highlights movement as well as structural change.
+% Drift correcting the data is advantageous towards isolating structural change with DSSIM.
+%
+% HOW TO USE THIS SCRIPT
+%   I strongly recommend starting with a highly binned dataset (<1 GB) and working
+%   backward to full resolution or uncropped data.
+%
+%   1. Edit only the Inputs block below.
+%   2. Run the script.
+%   3. Collect the three output files from the folder named in output_dir.
+%
+%   Every parameter is documented in detail in dssim_analysis.m.
+%   Type  help dssim_analysis  at any time.
+%
+% Method: Mulvey et al., Ultramicroscopy 257 (2024) 113894
+%         doi.org/10.1016/j.ultramic.2023.113894
+% Repository: github.com/JustinTMulvey/DSSIM_Analysis
+%
+% Author: Justin T. Mulvey, jtmulvey1@gmail.com
+%         Joe Patterson Research Group, University of California, Irvine
+%         Additional DSSIM examples can be viewed at justintmulvey.com
+%
+% Written and tested in MATLAB 2020b.
 
 clear all; clc; close all;
 
@@ -10,42 +37,35 @@ clear all; clc; close all;
 %================================= Inputs ================================%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% pre-processing parameters
-% guassian blur standard deviation
-gauss_filt_std = 1;
+% =============================================== THE FOUR THAT MATTER THE MOST
+% These decide what the analysis measures. Everything below is input, output or
+% appearance.
+gauss_filt_std           = 1;         % denoising blur, in pixels (0 = no blur)
+paras_dssim.frame_offset = 1;         % compare frame t with frame t + offset
+paras_dssim.radius       = 3;         % Gaussian std dev, in px (3 -> 19x19 px neighborhood)
+paras_dssim.exponents    = [1 1 1];   % DSSIM coefficients [a b g]: mean / variance / cross-corr
 
-% run name for saving files
-run_name = 'run1';
+% --------------------------------------------------------------------- input
+paras_dssim.data  = fullfile('..','example_data','Traffic_example_for_DSSIM.avi');
+paras_dssim.times = fullfile('..','example_data','time_data.csv');  % [] = 1 s per frame
 
-% data and time vector
-paras_dssim.data = 'Traffic_example_for_DSSIM.avi';% MATLAB image cell array, directory of .tif(f) images, or .avi
-paras_dssim.times = 'time_data.csv'; % time vector, inputting [] will result in 1 second per frame
+% -------------------------------------------------------------------- output
+run_name   = 'run1';                  % prefix for the three saved files
+output_dir = 'dssim_output';          % folder they are written to (created if needed)
 
-% % % % % % % % % % % % % % % 
-% % % dssim parameters  % % % 
-% % % % % % % % % % % % % % % 
+% -------------------------------------------------------------- display only
+paras_dssim.dssim_contrast_type  = "constant_contrast";    % or "per_frame_contrast"
+data_contrast_type               = "per_frame_contrast";   % contrast for the data pane
+outliers.rmv_bottom_outliers_pct = .1;                     % % clipped for display (0 = off)
+outliers.rmv_top_outlier_pct     = .1;
 
-% dssim algorithm parameters
-paras_dssim.frame_offset = 1;
-paras_dssim.exponents = [1 1 1];
-paras_dssim.radius = 3; %first standard deviation of neighborhood radius
+% ------------------------------------------------------------ rarely changed
+% Blanks the frame edge, where the neighborhood would read padding, not data.
+paras_dssim.remove_boarder_dist = ceil(paras_dssim.radius * 3);
 
-% contrast adjustment to dssim data. Must be "per_frame_contrast" or "constant_contrast"
-paras_dssim.dssim_contrast_type = "constant_contrast";
-
-% 0 if you would like to keep boarder values
-paras_dssim.remove_boarder_dist = ceil(paras_dssim.radius * 3); %recommended values
-
-% % % % % % % % % % % % % % % % % % % 
-% % % data rendering parameters % % % 
-% % % % % % % % % % % % % % % % % % % 
-
-% contrast adjustment to data. Must be "per_frame_contrast" or "constant_contrast"
-data_contrast_type = "per_frame_contrast"; 
-
-%set values to 0 if you do not wish to remove outliers
-outliers.rmv_bottom_outliers_pct = .1;
-outliers.rmv_top_outlier_pct = .1;
+neighborhood = 2*ceil(3*paras_dssim.radius) + 1;
+fprintf('radius = %g  ->  %d x %d px neighborhood, %d px border blanked\n', ...
+        paras_dssim.radius, neighborhood, neighborhood, paras_dssim.remove_boarder_dist);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %============================== Script Start =============================%
@@ -56,16 +76,25 @@ outliers.rmv_top_outlier_pct = .1;
 
 Stack_im = load_data_as_stack(paras_dssim.data);
 
-%% Preform Pre-processing
+%% Perform pre-processing
+% DSSIM responds to ANY frame-to-frame difference, and is very sensitive to noise such
+% as shot noise. For noisy low-dose data, blurring first is what separates structural
+% change from noise. Set gauss_filt_std to 0 to skip it if the data is already denoised.
+Stack_im_denoised = cell(size(Stack_im));
+
 for i = 1:numel(Stack_im)
-    
+
     im = Stack_im{i};
-    
-    % Denoise image with a gausian blur
-    im_denoise = imgaussfilt(im,gauss_filt_std);
+
+    if gauss_filt_std > 0
+        im_denoise = imgaussfilt(im,gauss_filt_std);
+    else
+        im_denoise = im;
+    end
 
     Stack_im_denoised{i} = im_denoise;
-        
+
+    print_progress(i,numel(Stack_im),'Denoising');
 end
 
 % This is the stack that will be used for analysis
@@ -87,17 +116,24 @@ Stack_im_RGB = creat_data_RGB_vid(Stack_im,data_contrast_type,outliers);
 
 stack_cat = Stack_Cat(Stack_im_RGB(dssim.inds_aligned), dssim.Stack_dssim_rgb_contr,2);
 
+%% Write the outputs
+
+% Everything lands in output_dir, so a run never scatters files into the code
+% folder and a second run under a new run_name sits alongside the first.
+if ~exist(output_dir,'dir')
+    mkdir(output_dir);
+end
+out = @(suffix) fullfile(output_dir,[char(run_name),suffix]);
+
 %% Write side-by-side video
 
 framerate = determine_frame_rate(stack_cat);
 
-vidname = [char(run_name),'_output_DSSIM_video'];
-
-write_movie(stack_cat,framerate,vidname)
+write_movie(stack_cat,framerate,out('_output_DSSIM_video'))
 
 %% Write csv with mean DSSIM values
 
-writetable(dssim.table_dssim_stats,[char(run_name),'_DSSIM_values.csv']);
+writetable(dssim.table_dssim_stats,out('_DSSIM_values.csv'));
 
 dssim_info = paras_dssim;
 dssim_info = rmfield(dssim_info,'times');
@@ -108,9 +144,41 @@ dssim_info.name = string(run_name);
 dssim_info.exponents = {dssim_info.exponents};
 table_dssim_info = struct2table(dssim_info);
 
-writetable(table_dssim_info,[char(run_name),'_DSSIM_run_info.csv']);
+writetable(table_dssim_info,out('_DSSIM_run_info.csv'));
+
+%% Report where everything went
+
+% dir() resolves output_dir to an absolute path whether it was given as a relative
+% or an absolute one. fullfile(pwd,output_dir) would be wrong for the latter.
+d = dir(output_dir);
+
+fprintf('\nSaved to %s\n', d(1).folder);
+fprintf('  %s_output_DSSIM_video.avi   original data beside the DSSIM map\n', run_name);
+fprintf('  %s_DSSIM_values.csv         per-frame times and mean DSSIM\n',     run_name);
+fprintf('  %s_DSSIM_run_info.csv       every parameter used\n',               run_name);
 
 %% Additional Functions
+
+function print_progress(i,n,label)
+%PRINT_PROGRESS  Report loop progress at 0, 20, 40, 60, 80 and 100 percent.
+%   Call once per iteration with the 1-based index i out of n. Only the six
+%   milestones print, so a 5000 frame run gives six lines rather than 5000.
+
+    step = 20;
+
+    if i == 1
+        fprintf('%s: 0%%\n',label);
+    end
+
+    % Print only when this iteration crosses into a new 20% band.
+    pct_now  = floor(100 *  i    / (n * step)) * step;
+    pct_prev = floor(100 * (i-1) / (n * step)) * step;
+
+    if pct_now > pct_prev
+        fprintf('%s: %d%%\n',label,pct_now);
+    end
+
+end
 
 function framerate = determine_frame_rate(stack_cat)
 
@@ -150,27 +218,30 @@ function Stack_im = creat_data_RGB_vid(Stack_im,data_contrast_type,outliers);
 
     for i = 1:size(Vol_data,1)
 
-        im = squeeze(Vol_data(1,:,:));
+        % Vol_data(i,...), not Vol_data(1,...). The old index was a literal 1, so
+        % every frame of the data pane in the side-by-side video was the first frame.
+        im = squeeze(Vol_data(i,:,:));
 
         im_rgb = gray2rgb_simple_no_recontrast(im);
 
         Stack_im{i} = im_rgb;
-        
+
+        print_progress(i,size(Vol_data,1),'Building video');
     end
     
 end
 
 function time_data = parse_time_input(paras_dssim)
 
-    if ischar(paras_dssim.times)
-        try 
-            t = readtable('time_data.csv');
+    if ischar(paras_dssim.times) || isstring(paras_dssim.times)
+        try
+            t = readtable(paras_dssim.times);
             time_data = table2array(t)';
         catch
-            warning(['Unable to read: "',paras_dssim.times,'", times assumed to be 1 second per frame.']);
+            warning(['Unable to read: "',char(paras_dssim.times),'", times assumed to be 1 second per frame.']);
             time_data = 0:numel(paras_dssim.data)-1;
         end
-    else isempty(paras_dssim.times)
+    else
         time_data = 0:numel(paras_dssim.data)-1;
         warning("Time Assumed to be 1 second per frame. Otherwise change paras_dssim.times")
     end
@@ -198,57 +269,49 @@ end
 
 function [img,low_thresh,high_thresh] = remove_outliers(img,low_limit_pct,up_limit_pct)
 
-    if low_limit_pct ~= 0 && up_limit_pct ~=0
-        nel=numel(img);
+    % Each side handled independently, with index guards. See the matching comment
+    % in dssim_analysis.m.
+    nel = numel(img);
+    img_vec_sorted = sort(img(:),'descend');
 
-        pix_high=round(up_limit_pct./100.*nel); 
-        pix_low=round(low_limit_pct./100.*nel);
+    high_thresh = img_vec_sorted(1);
+    low_thresh  = img_vec_sorted(end);
 
-        img_vec=img(:);
-        img_vec_sorted=sort(img_vec,'descend');
+    if up_limit_pct ~= 0
+        pix_high = max(round(up_limit_pct./100.*nel), 1);
+        high_thresh = img_vec_sorted(pix_high);
+        img(img >= high_thresh) = high_thresh;
+    end
 
-        high_thresh=img_vec_sorted(pix_high);
-        low_thresh = img_vec_sorted(end-pix_low);
-
-        high_log = img>=high_thresh;
-        low_log = img<=low_thresh;
-
-        img(high_log)=high_thresh;
-        img(low_log)=low_thresh;
-    else
-        img = img;
+    if low_limit_pct ~= 0
+        pix_low = max(round(low_limit_pct./100.*nel), 1);
+        low_thresh = img_vec_sorted(end - pix_low + 1);
+        img(img <= low_thresh) = low_thresh;
     end 
 
 end
 
-function [Stack_Compare] = Stack_Cat(Stack1,Stack2,dim,vargin)
+function [Stack_Compare] = Stack_Cat(Stack1,Stack2,dim)
+% Join two equal-length image stacks frame by frame. dim = 2 places them side by side.
+%
+% The old version took a 4th argument spelled 'vargin' (not varargin, so it did
+% nothing) and branched on uint8 into two identical bodies.
 
-    if nargin == 2
+    if nargin < 3
         dim = 2;
     end
 
-    im = Stack1{1};
-    
-    if string(class(im)) == 'uint8'
-        
-        for i = 1:length(Stack1)
-            im1 = Stack1{i};
-            im2 = Stack2{i};
+    if numel(Stack1) ~= numel(Stack2)
+        error('Stack_Cat:lengthMismatch', ...
+              'Stacks have different frame counts: %d and %d', numel(Stack1), numel(Stack2));
+    end
 
-            Stack_Compare{i} = cat(dim,im1,im2);
-            
-        end
-        
-    else
-        for i = 1:length(Stack1)
-            im1 = Stack1{i};
-            im2 = Stack2{i};
+    Stack_Compare = cell(size(Stack1));
 
-            Stack_Compare{i} = cat(dim,im1,im2);
-            
-        end
-     end
-    
+    for i = 1:numel(Stack1)
+        Stack_Compare{i} = cat(dim, Stack1{i}, Stack2{i});
+    end
+
 end
 
 function im_rgb = gray2rgb_simple_no_recontrast(im)
@@ -262,12 +325,14 @@ function [] = write_movie(Stack,framerate,vidname)
 %MOVIEJM2 Summary of this function goes here
 %   Detailed explanation goes here
 
-    vdims = size(Stack);
+    % numel, not size(Stack)(2) - the old form assumed a 1xN cell array and wrote a
+    % single frame if it was ever handed an Nx1 one.
+    n_frames = numel(Stack);
 
     if isa(Stack{1},'uint8')
         Stack_uint8 = Stack;
     else 
-        for i = 1:vdims(2)
+        for i = 1:n_frames
            image =double( Stack{i} );
            image2 = image - min(image(:));
            image3 = uint8(image2./max(image2(:)) * 255);
@@ -289,9 +354,10 @@ function [] = write_movie(Stack,framerate,vidname)
     
     v.FrameRate = framerate;
     open(v);
-    for i = 1:vdims(2)
+    for i = 1:n_frames
         writeVideo(v,Stack_uint8{i});
-        
+
+        print_progress(i,n_frames,'Writing video');
     end
     
     close(v)
@@ -365,9 +431,10 @@ function Stack = avi_to_Stack(avi_path)
 end
 
 function paths_cell = JM_glob(folder_path,suffix)
-% THIS NEED glob AS DEPENDANT
+% Depends on glob(), which is vendored at the bottom of this file.
 
-glob_path = char([ char(folder_path) '\**' suffix]);
+% fullfile, not a hardcoded '\' - the old form only built a valid path on Windows.
+glob_path = fullfile(char(folder_path),['**' char(suffix)]);
 paths_cell = glob(glob_path);
 
 end

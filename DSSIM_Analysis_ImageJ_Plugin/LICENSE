@@ -1,0 +1,39 @@
+LICENSE — DSSIM ImageJ Plugin
+
+This plugin is derived from the SSIM Index ImageJ plugin by:
+
+  Gabriel Prieto, Margarita Chevalier, Eduardo Guibelalde
+  Department of Radiology, Faculty of Medicine
+  Universidad Complutense, Madrid, Spain
+  gprietor@med.ucm.es
+
+which itself implements the algorithm of:
+
+  Zhou Wang, A. C. Bovik, H. R. Sheikh, E. P. Simoncelli,
+  "Image quality assessment: From error visibility to structural similarity",
+  IEEE Trans. Image Processing, vol. 13, pp. 600-612, Apr. 2004.
+
+The original authors' terms, reproduced from the header of DSSIM_index.java,
+continue to apply to this plugin and to any derivative of it:
+
+    Permission to use, copy, or modify this software and its documentation for
+    educational and research purposes only and without fee is hereby granted,
+    provided that this copyright notice and the original authors' names appear
+    on all copies and supporting documentation. This program shall not be used,
+    rewritten, or adapted as the basis of a commercial software or hardware
+    product without first obtaining permission of the authors. The authors make
+    no representations about the suitability of this software for any purpose.
+    It is provided "as is" without express or implied warranty.
+
+IN SHORT: educational and research use is permitted; commercial use requires
+permission from the original authors. The MIT license in the repository root does
+NOT apply to this directory.
+
+Please refer to the original work as:
+
+  Gabriel Prieto, Margarita Chevalier, Eduardo Guibelalde. "SSIM Index as a Java
+  plugin for ImageJ". Department of Radiology, Faculty of Medicine, Universidad
+  Complutense, Madrid, Spain.
+
+DSSIM modifications by Justin T. Mulvey, Patterson Group, University of California,
+Irvine.
